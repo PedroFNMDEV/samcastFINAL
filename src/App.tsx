@@ -4,10 +4,6 @@ import 'react-toastify/dist/ReactToastify.css';
 
 // Auth Pages
 import Login from './pages/auth/Login';
-import ForgotPassword from './pages/auth/ForgotPassword';
-import ConfirmEmail from './pages/auth/ConfirmEmail';
-import ResetPassword from './pages/auth/ResetPassword';
-import AuthCallback from './pages/auth/AuthCallback';
 
 // Dashboard Pages
 import Dashboard from './pages/dashboard/Dashboard';
@@ -49,10 +45,6 @@ function App() {
             <Route path="/" element={<AuthLayout />}>
               <Route index element={<RedirectToProperPlace />} />
               <Route path="login" element={<Login />} />
-              <Route path="forgot-password" element={<ForgotPassword />} />
-              <Route path="confirm" element={<ConfirmEmail />} />
-              <Route path="reset-password" element={<ResetPassword />} />
-              <Route path="auth/callback" element={<AuthCallback />} />
             </Route>
 
             {/* Dashboard Routes */}

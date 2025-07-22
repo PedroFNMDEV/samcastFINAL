@@ -74,14 +74,9 @@ const Login: React.FC = () => {
         </div>
 
         <div>
-          <div className="flex items-center justify-between mb-1">
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              Senha
-            </label>
-            <Link to="/forgot-password" className="text-sm text-primary-600 hover:text-primary-800">
-              Esqueceu a senha?
-            </Link>
-          </div>
+          <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
+            Senha
+          </label>
           <input
             id="password"
             name="password"
@@ -133,15 +128,6 @@ const Login: React.FC = () => {
           </button>
         </div>
       </form>
-
-      <div className="mt-6 text-center">
-        <p className="text-sm text-gray-600">
-          Não tem uma conta?{' '}
-          <Link to="/register" className="text-primary-600 hover:text-primary-800 font-medium">
-            Criar conta
-          </Link>
-        </p>
-      </div>
     </>
   );
 };

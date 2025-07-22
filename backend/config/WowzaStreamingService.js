@@ -17,35 +17,73 @@ class WowzaStreamingService {
     async initializeFromDatabase(userId) {
         try {
             // Buscar dados do servidor Wowza baseado no usuário
+            let serverId = this.serverId;
+            
+            // Primeiro, tentar buscar o servidor do streaming do usuário
             const [streamingRows] = await db.execute(
-                'SELECT codigo_servidor FROM streamings WHERE codigo_cliente = ? LIMIT 1',
-                [userId]
+                'SELECT codigo_servidor FROM streamings WHERE codigo_cliente = ? OR codigo = ? LIMIT 1',
+                [userId, userId]
             );
 
-            let serverId = this.serverId;
             if (streamingRows.length > 0) {
                 serverId = streamingRows[0].codigo_servidor;
             }
 
+            // Se não encontrou servidor específico, buscar o melhor servidor disponível
+            if (!serverId) {
+                const [bestServerRows] = await db.execute(
+                    `SELECT codigo FROM wowza_servers 
+                     WHERE status = 'ativo' 
+                     ORDER BY streamings_ativas ASC, load_cpu ASC 
+                     LIMIT 1`
+                );
+                
+                if (bestServerRows.length > 0) {
+                    serverId = bestServerRows[0].codigo;
+                }
+            }
+
             // Buscar configurações do servidor Wowza
             const [serverRows] = await db.execute(
-                'SELECT ip, porta_wowza, usuario_wowza, senha_wowza FROM wowza_servers WHERE codigo = ?',
-                [serverId || 1] // Default para servidor 1 se não encontrar
+                `SELECT 
+                    codigo,
+                    nome,
+                    ip, 
+                    senha_root,
+                    porta_ssh,
+                    limite_streamings,
+                    streamings_ativas,
+                    load_cpu,
+                    status,
+                    tipo_servidor
+                 FROM wowza_servers 
+                 WHERE codigo = ? AND status = 'ativo'`,
+                [serverId || 1]
             );
 
             if (serverRows.length > 0) {
                 const server = serverRows[0];
+                this.serverId = server.codigo;
                 this.wowzaHost = server.ip;
-                this.wowzaPort = server.porta_wowza || 6980;
-                this.wowzaUser = server.usuario_wowza || 'admin';
-                this.wowzaPassword = server.senha_wowza;
+                this.wowzaPort = 8087; // Porta padrão da API REST do Wowza
+                this.wowzaUser = 'admin'; // Usuário padrão da API
+                this.wowzaPassword = server.senha_root; // Usar senha root como senha da API
+                this.serverInfo = {
+                    id: server.codigo,
+                    nome: server.nome,
+                    limite_streamings: server.limite_streamings,
+                    streamings_ativas: server.streamings_ativas,
+                    load_cpu: server.load_cpu,
+                    tipo_servidor: server.tipo_servidor
+                };
 
                 this.baseUrl = `http://${this.wowzaHost}:${this.wowzaPort}/v2/servers/_defaultServer_/vhosts/_defaultVHost_`;
                 this.client = new DigestFetch(this.wowzaUser, this.wowzaPassword);
                 
+                console.log(`Wowza inicializado: ${server.nome} (${server.ip})`);
                 return true;
             } else {
-                console.error('Servidor Wowza não encontrado no banco de dados');
+                console.error('Nenhum servidor Wowza ativo encontrado no banco de dados');
                 return false;
             }
         } catch (error) {
@@ -197,6 +235,16 @@ class WowzaStreamingService {
         try {
             console.log(`Iniciando transmissão - Stream ID: ${streamId}`);
 
+            // Verificar se o servidor ainda tem capacidade
+            if (this.serverInfo) {
+                if (this.serverInfo.streamings_ativas >= this.serverInfo.limite_streamings) {
+                    throw new Error('Servidor atingiu o limite máximo de streamings simultâneas');
+                }
+                
+                if (this.serverInfo.load_cpu > 90) {
+                    throw new Error('Servidor com alta carga de CPU. Tente novamente em alguns minutos');
+                }
+            }
             const appResult = await this.ensureApplication();
             if (!appResult.success) {
                 throw new Error('Falha ao configurar aplicação no Wowza');
@@ -206,6 +254,13 @@ class WowzaStreamingService {
 
             const pushResults = await this.configurePlatformPush(streamName, platforms);
 
+            // Atualizar contador de streamings ativas no servidor
+            if (this.serverId) {
+                await db.execute(
+                    'UPDATE wowza_servers SET streamings_ativas = streamings_ativas + 1 WHERE codigo = ?',
+                    [this.serverId]
+                );
+            }
             this.activeStreams.set(streamId, {
                 streamName,
                 wowzaStreamId: streamName,
@@ -215,7 +270,8 @@ class WowzaStreamingService {
                 playlistId,
                 platforms: pushResults,
                 viewers: 0,
-                bitrate: 2500
+                bitrate: 2500,
+                serverId: this.serverId
             });
 
             return {
@@ -228,7 +284,8 @@ class WowzaStreamingService {
                     playUrl: `http://${this.wowzaHost}:1935/${this.wowzaApplication}/${streamName}/playlist.m3u8`,
                     hlsUrl: `http://${this.wowzaHost}:1935/${this.wowzaApplication}/${streamName}/playlist.m3u8`,
                     dashUrl: `http://${this.wowzaHost}:1935/${this.wowzaApplication}/${streamName}/manifest.mpd`,
-                    pushResults
+                    pushResults,
+                    serverInfo: this.serverInfo
                 },
                 bitrate: 2500
             };
@@ -264,6 +321,13 @@ class WowzaStreamingService {
                 }
             }
 
+            // Decrementar contador de streamings ativas no servidor
+            if (streamInfo.serverId) {
+                await db.execute(
+                    'UPDATE wowza_servers SET streamings_ativas = GREATEST(streamings_ativas - 1, 0) WHERE codigo = ?',
+                    [streamInfo.serverId]
+                );
+            }
             this.activeStreams.delete(streamId);
 
             return {

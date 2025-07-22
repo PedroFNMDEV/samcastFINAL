@@ -7,10 +7,13 @@ const userSchema = z.object({
   id: z.number(),
   nome: z.string(),
   email: z.string().email(),
+  tipo: z.enum(['revenda', 'streaming']),
   streamings: z.number(),
   espectadores: z.number(),
   bitrate: z.number(),
   espaco: z.number(),
+  codigo_cliente: z.number().nullable().optional(),
+  codigo_servidor: z.number().nullable().optional(),
 });
 
 type User = z.infer<typeof userSchema>;
@@ -124,59 +127,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (name: string, email: string, password: string) => {
-    try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ nome: name, email, password }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao criar conta');
-      }
-
-      if (data.success && data.token && data.user) {
-        localStorage.setItem('auth_token', data.token);
-        const validatedUser = userSchema.parse(data.user);
-        setUser(validatedUser);
-        setIsAuthenticated(true);
-        navigate('/dashboard');
-        toast.success('Cadastro realizado com sucesso!');
-      } else {
-        throw new Error('Resposta inválida do servidor');
-      }
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao criar conta');
-      throw error;
-    }
+    // Função removida - registro não é mais permitido
+    throw new Error('Registro de novos usuários não é permitido');
   };
 
   const forgotPassword = async (email: string) => {
-    try {
-      const response = await fetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao enviar email de recuperação');
-      }
-
-      toast.success('Email de recuperação enviado!');
-      navigate('/login');
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao enviar email de recuperação');
-      throw error;
-    }
+    // Função removida - recuperação de senha não é mais permitida
+    throw new Error('Recuperação de senha não é permitida');
   };
 
   // Renderiza um fallback enquanto carrega a sessão
