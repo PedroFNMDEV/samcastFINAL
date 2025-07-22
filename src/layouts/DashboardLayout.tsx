@@ -210,7 +210,16 @@ const DashboardLayout: React.FC = () => {
                 <div className="h-8 w-8 rounded-full bg-primary-600 flex items-center justify-center text-white">
                   <User className="h-5 w-5" />
                 </div>
-                <span className="ml-2 font-medium text-gray-700">{user?.nome || 'Usuário'}</span>
+                <div className="ml-2">
+                  <span className="font-medium text-gray-700">{user?.nome || 'Usuário'}</span>
+                  {user?.tipo && (
+                    <span className={`ml-2 text-xs px-2 py-1 rounded-full ${
+                      user.tipo === 'revenda' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                    }`}>
+                      {user.tipo === 'revenda' ? 'Revenda' : 'Streaming'}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>

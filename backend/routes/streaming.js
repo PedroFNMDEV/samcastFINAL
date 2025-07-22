@@ -11,10 +11,7 @@ router.get('/status', authMiddleware, async (req, res) => {
     
     // Inicializar serviço Wowza com dados do usuário
     const wowzaService = new WowzaStreamingService();
-    
-    // Para usuários de streaming, usar o próprio ID. Para revendas, usar o ID do cliente
-    const targetUserId = req.user.tipo === 'streaming' ? userId : userId;
-    const initialized = await wowzaService.initializeFromDatabase(targetUserId);
+    const initialized = await wowzaService.initializeFromDatabase(userId);
     
     if (!initialized) {
       return res.status(500).json({ 
@@ -215,7 +212,10 @@ router.post('/stop', authMiddleware, async (req, res) => {
 
     // Inicializar serviço Wowza
     const wowzaService = new WowzaStreamingService();
-    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    // Para usuários de streaming, usar o próprio ID. Para revendas, usar o ID do cliente
+    const targetUserId = req.user.tipo === 'streaming' ? userId : userId;
+    const initialized = await wowzaService.initializeFromDatabase(targetUserId);
     
     if (!initialized) {
       return res.status(500).json({ 
