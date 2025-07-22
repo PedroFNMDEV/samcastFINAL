@@ -1,37 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Play, Square, Settings, Copy, Radio, Users, BarChart3, Wifi, WifiOff, Youtube, Instagram, Facebook, Twitch, Video, Globe, Zap, Activity, AlertCircle, CheckCircle, Plus, Trash2, Upload, Image, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, Play, Square, Settings, Upload, Eye, EyeOff, Plus, Trash2, Radio, Activity, Users, Zap, Clock, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
 import { useStream } from '../../context/StreamContext';
 
+interface Playlist {
+  id: number;
+  nome: string;
+  total_videos?: number;
+  duracao_total?: number;
+}
+
 interface Platform {
-  id: string;
+  id: number;
   nome: string;
   codigo: string;
-  icone: string;
   rtmp_base_url: string;
   requer_stream_key: boolean;
 }
 
 interface UserPlatform {
-  id: string;
-  id_platform: string;
+  id: number;
+  id_platform: number;
   stream_key: string;
   rtmp_url: string;
-  titulo_padrao?: string;
-  descricao_padrao?: string;
+  titulo_padrao: string;
+  descricao_padrao: string;
   ativo: boolean;
   platform: Platform;
 }
 
-interface Playlist {
-  id: number;
-  nome: string;
-}
-
 interface Logo {
-  id: string;
+  id: number;
   nome: string;
   url: string;
   tamanho: number;
@@ -39,32 +40,24 @@ interface Logo {
 }
 
 interface TransmissionSettings {
-  id: string;
-  nome: string;
-  id_logo?: string;
-  logo_posicao: string;
-  logo_opacidade: number;
-  logo_tamanho: string;
-  logo_margem_x: number;
-  logo_margem_y: number;
-  embaralhar_videos: boolean;
-  repetir_playlist: boolean;
-  transicao_videos: string;
-  resolucao: string;
-  fps: number;
-  bitrate: number;
-  titulo_padrao?: string;
-  descricao_padrao?: string;
-  logo?: Logo;
+  titulo: string;
+  descricao: string;
+  playlist_id: string;
+  platform_ids: number[];
+  bitrate_override?: number;
+  enable_recording: boolean;
+  logo_id?: number;
+  logo_position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  logo_opacity: number;
 }
 
-interface TransmissionStatus {
+interface StreamStatus {
   is_live: boolean;
+  stream_type?: 'playlist' | 'obs';
   transmission?: {
-    id: string;
+    id: number;
     titulo: string;
     status: string;
-    data_inicio: string;
     stats: {
       viewers: number;
       bitrate: number;
@@ -73,34 +66,50 @@ interface TransmissionStatus {
     };
     platforms: Array<{
       user_platform: {
-        platform: Platform;
+        platform: {
+          nome: string;
+          codigo: string;
+        };
       };
       status: string;
     }>;
   };
+  obs_stream?: {
+    is_live: boolean;
+    viewers: number;
+    bitrate: number;
+    uptime: string;
+    recording: boolean;
+    platforms: any[];
+  };
 }
 
 const IniciarTransmissao: React.FC = () => {
-  const { getToken } = useAuth();
-  const { streamData, updateStreamData } = useStream();
+  const { getToken, user } = useAuth();
+  const { streamData, refreshStreamStatus } = useStream();
   
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [userPlatforms, setUserPlatforms] = useState<UserPlatform[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [logos, setLogos] = useState<Logo[]>([]);
-  const [transmissionSettings, setTransmissionSettings] = useState<TransmissionSettings[]>([]);
-  const [transmissionStatus, setTransmissionStatus] = useState<TransmissionStatus>({ is_live: false });
+  const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   
   const [loading, setLoading] = useState(false);
-  const [showPlatformConfig, setShowPlatformConfig] = useState(false);
-  const [showLogoUpload, setShowLogoUpload] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<string>('');
-  const [selectedSettings, setSelectedSettings] = useState<string>('');
+  const [showPlatformModal, setShowPlatformModal] = useState(false);
+  const [showLogoModal, setShowLogoModal] = useState(false);
   
-  // Form para nova plataforma
-  const [newPlatformForm, setNewPlatformForm] = useState({
+  const [settings, setSettings] = useState<TransmissionSettings>({
+    titulo: '',
+    descricao: '',
+    playlist_id: '',
+    platform_ids: [],
+    enable_recording: false,
+    logo_position: 'top-right',
+    logo_opacity: 80
+  });
+
+  // Platform configuration modal
+  const [platformConfig, setPlatformConfig] = useState({
     platform_id: '',
     stream_key: '',
     rtmp_url: '',
@@ -108,319 +117,139 @@ const IniciarTransmissao: React.FC = () => {
     descricao_padrao: ''
   });
 
-  // Form para transmissão
-  const [transmissionForm, setTransmissionForm] = useState({
-    titulo: '',
-    descricao: '',
-    bitrate_override: '',
-    enable_recording: false
-  });
-
-  // Form para upload de logo
-  const [logoUploadForm, setLogoUploadForm] = useState({
-    nome: '',
-    file: null as File | null
-  });
-
-  // Form para configurações avançadas
-  const [advancedSettingsForm, setAdvancedSettingsForm] = useState({
-    nome: 'Nova Configuração',
-    id_logo: '',
-    logo_posicao: 'top-right',
-    logo_opacidade: 80,
-    logo_tamanho: 'medium',
-    logo_margem_x: 20,
-    logo_margem_y: 20,
-    embaralhar_videos: false,
-    repetir_playlist: true,
-    transicao_videos: 'fade',
-    resolucao: '1080p',
-    fps: 30,
-    bitrate: 2500,
-    titulo_padrao: '',
-    descricao_padrao: ''
-  });
+  // Logo upload
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoName, setLogoName] = useState('');
 
   useEffect(() => {
     loadInitialData();
-    checkTransmissionStatus();
-
-    // Atualizar status a cada 30 segundos se estiver transmitindo
-    const interval = setInterval(() => {
-      if (transmissionStatus.is_live) {
-        checkTransmissionStatus();
-      }
-    }, 30000);
-
+    checkStreamStatus();
+    
+    // Atualizar status a cada 10 segundos
+    const interval = setInterval(checkStreamStatus, 10000);
     return () => clearInterval(interval);
   }, []);
 
   const loadInitialData = async () => {
+    await Promise.all([
+      loadPlaylists(),
+      loadPlatforms(),
+      loadUserPlatforms(),
+      loadLogos()
+    ]);
+  };
+
+  const loadPlaylists = async () => {
     try {
       const token = await getToken();
-      
-      // Carregar plataformas disponíveis
-      const platformsResponse = await fetch('/api/streaming/platforms', {
+      const response = await fetch('/api/playlists', {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const platformsData = await platformsResponse.json();
-      if (platformsData.success) {
-        setPlatforms(platformsData.platforms);
-      }
-
-      // Carregar plataformas configuradas pelo usuário
-      const userPlatformsResponse = await fetch('/api/streaming/user-platforms', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const userPlatformsData = await userPlatformsResponse.json();
-      if (userPlatformsData.success) {
-        setUserPlatforms(userPlatformsData.platforms);
-      }
-
-      // Carregar playlists
-      const playlistsResponse = await fetch('/api/playlists', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const playlistsData = await playlistsResponse.json();
-      setPlaylists(playlistsData);
-
-      // Carregar logos
-      const logosResponse = await fetch('/api/logos', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const logosData = await logosResponse.json();
-      setLogos(logosData);
-
-      // Carregar configurações de transmissão
-      const settingsResponse = await fetch('/api/transmission-settings', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const settingsData = await settingsResponse.json();
-      setTransmissionSettings(settingsData);
-
+      const data = await response.json();
+      setPlaylists(data);
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
-      toast.error('Erro ao carregar dados iniciais');
+      console.error('Erro ao carregar playlists:', error);
     }
   };
 
-  const checkTransmissionStatus = async () => {
+  const loadPlatforms = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/platforms', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPlatforms(result.platforms);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar plataformas:', error);
+    }
+  };
+
+  const loadUserPlatforms = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/user-platforms', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      if (result.success) {
+        setUserPlatforms(result.platforms);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar plataformas do usuário:', error);
+    }
+  };
+
+  const loadLogos = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/logos', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setLogos(data);
+    } catch (error) {
+      console.error('Erro ao carregar logos:', error);
+    }
+  };
+
+  const checkStreamStatus = async () => {
     try {
       const token = await getToken();
       const response = await fetch('/api/streaming/status', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const result = await response.json();
-      
       if (result.success) {
-        setTransmissionStatus(result);
-        
-        // Atualizar contexto de stream
-        if (result.is_live && result.transmission) {
-          updateStreamData({
-            isLive: true,
-            viewers: result.transmission.stats.viewers,
-            bitrate: result.transmission.stats.bitrate,
-            uptime: result.transmission.stats.uptime,
-            title: result.transmission.titulo
-          });
-        } else {
-          updateStreamData({
-            isLive: false,
-            viewers: 0,
-            bitrate: 0,
-            uptime: '00:00:00'
-          });
-        }
+        setStreamStatus(result);
       }
     } catch (error) {
       console.error('Erro ao verificar status:', error);
     }
   };
 
-  const handleConfigurePlatform = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!newPlatformForm.platform_id || !newPlatformForm.stream_key) {
-      toast.error('Plataforma e Stream Key são obrigatórios');
-      return;
-    }
-
-    try {
-      const token = await getToken();
-      const response = await fetch('/api/streaming/configure-platform', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(newPlatformForm)
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        toast.success('Plataforma configurada com sucesso!');
-        setNewPlatformForm({
-          platform_id: '',
-          stream_key: '',
-          rtmp_url: '',
-          titulo_padrao: '',
-          descricao_padrao: ''
-        });
-        setShowPlatformConfig(false);
-        loadInitialData();
-      } else {
-        toast.error(result.error || 'Erro ao configurar plataforma');
-      }
-    } catch (error) {
-      console.error('Erro ao configurar plataforma:', error);
-      toast.error('Erro ao configurar plataforma');
-    }
-  };
-
-  const handleLogoUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!logoUploadForm.nome || !logoUploadForm.file) {
-      toast.error('Nome e arquivo são obrigatórios');
-      return;
-    }
-
-    try {
-      const token = await getToken();
-      const formData = new FormData();
-      formData.append('nome', logoUploadForm.nome);
-      formData.append('logo', logoUploadForm.file);
-
-      const response = await fetch('/api/logos', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        toast.success('Logo enviada com sucesso!');
-        setLogoUploadForm({ nome: '', file: null });
-        setShowLogoUpload(false);
-        loadInitialData();
-      } else {
-        toast.error(result.error || 'Erro ao enviar logo');
-      }
-    } catch (error) {
-      console.error('Erro ao enviar logo:', error);
-      toast.error('Erro ao enviar logo');
-    }
-  };
-
-  const handleSaveAdvancedSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const token = await getToken();
-      const response = await fetch('/api/transmission-settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(advancedSettingsForm)
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        toast.success('Configurações salvas com sucesso!');
-        setShowAdvancedSettings(false);
-        loadInitialData();
-      } else {
-        toast.error(result.error || 'Erro ao salvar configurações');
-      }
-    } catch (error) {
-      console.error('Erro ao salvar configurações:', error);
-      toast.error('Erro ao salvar configurações');
-    }
-  };
-
   const handleStartTransmission = async () => {
-    if (!transmissionForm.titulo) {
-      toast.error('Título da transmissão é obrigatório');
+    if (!settings.titulo || !settings.playlist_id) {
+      toast.error('Título e playlist são obrigatórios');
       return;
     }
 
-    if (selectedPlatforms.length === 0) {
+    if (settings.platform_ids.length === 0) {
       toast.error('Selecione pelo menos uma plataforma');
-      return;
-    }
-
-    if (!selectedPlaylist) {
-      toast.error('Selecione uma playlist');
       return;
     }
 
     setLoading(true);
     try {
       const token = await getToken();
-      
-      // Buscar configurações selecionadas
-      let settings = {};
-      if (selectedSettings) {
-        const settingsData = transmissionSettings.find(s => s.id === selectedSettings);
-        if (settingsData) {
-          settings = {
-            embaralhar_videos: settingsData.embaralhar_videos,
-            repetir_playlist: settingsData.repetir_playlist,
-            logo_config: settingsData.logo ? {
-              url: settingsData.logo.url,
-              posicao: settingsData.logo_posicao,
-              opacidade: settingsData.logo_opacidade,
-              tamanho: settingsData.logo_tamanho,
-              margem_x: settingsData.logo_margem_x,
-              margem_y: settingsData.logo_margem_y
-            } : null
-          };
-        }
-      }
-
       const response = await fetch('/api/streaming/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          titulo: transmissionForm.titulo,
-          descricao: transmissionForm.descricao,
-          playlist_id: selectedPlaylist,
-          platform_ids: selectedPlatforms,
-          id_transmission_settings: selectedSettings || null,
-          bitrate_override: transmissionForm.bitrate_override ? parseInt(transmissionForm.bitrate_override) : null,
-          enable_recording: transmissionForm.enable_recording,
-          settings
-        })
+        body: JSON.stringify(settings)
       });
 
       const result = await response.json();
 
       if (result.success) {
         toast.success('Transmissão iniciada com sucesso!');
+        checkStreamStatus();
+        refreshStreamStatus();
         
-        // Mostrar avisos se houver
-        if (result.warnings && result.warnings.length > 0) {
-          result.warnings.forEach((warning: string) => {
-            toast.warning(warning);
-          });
-        }
-        
-        checkTransmissionStatus();
-        setTransmissionForm({ titulo: '', descricao: '', bitrate_override: '', enable_recording: false });
-        setSelectedPlatforms([]);
-        setSelectedPlaylist('');
-        setSelectedSettings('');
+        // Limpar formulário
+        setSettings({
+          titulo: '',
+          descricao: '',
+          playlist_id: '',
+          platform_ids: [],
+          enable_recording: false,
+          logo_position: 'top-right',
+          logo_opacity: 80
+        });
       } else {
         toast.error(result.error || 'Erro ao iniciar transmissão');
       }
@@ -433,7 +262,9 @@ const IniciarTransmissao: React.FC = () => {
   };
 
   const handleStopTransmission = async () => {
-    if (!transmissionStatus.transmission) return;
+    if (!streamStatus?.transmission?.id) return;
+
+    if (!confirm('Deseja realmente finalizar a transmissão?')) return;
 
     setLoading(true);
     try {
@@ -445,7 +276,8 @@ const IniciarTransmissao: React.FC = () => {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          transmission_id: transmissionStatus.transmission.id
+          transmission_id: streamStatus.transmission.id,
+          stream_type: 'playlist'
         })
       });
 
@@ -453,7 +285,8 @@ const IniciarTransmissao: React.FC = () => {
 
       if (result.success) {
         toast.success('Transmissão finalizada com sucesso!');
-        checkTransmissionStatus();
+        checkStreamStatus();
+        refreshStreamStatus();
       } else {
         toast.error(result.error || 'Erro ao finalizar transmissão');
       }
@@ -465,7 +298,81 @@ const IniciarTransmissao: React.FC = () => {
     }
   };
 
-  const removePlatform = async (platformId: string) => {
+  const handleConfigurePlatform = async () => {
+    if (!platformConfig.platform_id || !platformConfig.stream_key) {
+      toast.error('Plataforma e chave de transmissão são obrigatórios');
+      return;
+    }
+
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/configure-platform', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(platformConfig)
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success('Plataforma configurada com sucesso!');
+        loadUserPlatforms();
+        setShowPlatformModal(false);
+        setPlatformConfig({
+          platform_id: '',
+          stream_key: '',
+          rtmp_url: '',
+          titulo_padrao: '',
+          descricao_padrao: ''
+        });
+      } else {
+        toast.error(result.error || 'Erro ao configurar plataforma');
+      }
+    } catch (error) {
+      console.error('Erro ao configurar plataforma:', error);
+      toast.error('Erro ao configurar plataforma');
+    }
+  };
+
+  const handleUploadLogo = async () => {
+    if (!logoFile || !logoName) {
+      toast.error('Selecione um arquivo e digite um nome para a logo');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('logo', logoFile);
+    formData.append('nome', logoName);
+
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/logos', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (response.ok) {
+        toast.success('Logo enviada com sucesso!');
+        loadLogos();
+        setShowLogoModal(false);
+        setLogoFile(null);
+        setLogoName('');
+      } else {
+        toast.error('Erro ao enviar logo');
+      }
+    } catch (error) {
+      console.error('Erro ao enviar logo:', error);
+      toast.error('Erro ao enviar logo');
+    }
+  };
+
+  const handleRemovePlatform = async (platformId: number) => {
     if (!confirm('Deseja remover esta plataforma?')) return;
 
     try {
@@ -475,11 +382,13 @@ const IniciarTransmissao: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (response.ok) {
+      const result = await response.json();
+
+      if (result.success) {
         toast.success('Plataforma removida com sucesso!');
-        loadInitialData();
+        loadUserPlatforms();
       } else {
-        toast.error('Erro ao remover plataforma');
+        toast.error(result.error || 'Erro ao remover plataforma');
       }
     } catch (error) {
       console.error('Erro ao remover plataforma:', error);
@@ -487,40 +396,24 @@ const IniciarTransmissao: React.FC = () => {
     }
   };
 
-  const removeLogo = async (logoId: string) => {
-    if (!confirm('Deseja remover esta logo?')) return;
-
-    try {
-      const token = await getToken();
-      const response = await fetch(`/api/logos/${logoId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (response.ok) {
-        toast.success('Logo removida com sucesso!');
-        loadInitialData();
-      } else {
-        toast.error('Erro ao remover logo');
-      }
-    } catch (error) {
-      console.error('Erro ao remover logo:', error);
-      toast.error('Erro ao remover logo');
-    }
+  const togglePlatformSelection = (platformId: number) => {
+    setSettings(prev => ({
+      ...prev,
+      platform_ids: prev.platform_ids.includes(platformId)
+        ? prev.platform_ids.filter(id => id !== platformId)
+        : [...prev.platform_ids, platformId]
+    }));
   };
 
-  const getIconComponent = (iconName: string) => {
-    const icons: { [key: string]: React.ComponentType<any> } = {
-      youtube: Youtube,
-      instagram: Instagram,
-      facebook: Facebook,
-      twitch: Twitch,
-      video: Video,
-      globe: Globe,
-      zap: Zap,
-      activity: Activity
-    };
-    return icons[iconName] || Activity;
+  const formatDuration = (seconds: number): string => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const getSelectedPlatforms = () => {
+    return userPlatforms.filter(up => settings.platform_ids.includes(up.id));
   };
 
   return (
@@ -533,19 +426,29 @@ const IniciarTransmissao: React.FC = () => {
       </div>
 
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-          <Radio className="h-8 w-8 mr-3 text-primary-600" />
-          Gerenciar Transmissão
-        </h1>
+        <div className="flex items-center space-x-3">
+          <Radio className="h-8 w-8 text-primary-600" />
+          <h1 className="text-3xl font-bold text-gray-900">Iniciar Transmissão</h1>
+        </div>
+        
+        <button
+          onClick={checkStreamStatus}
+          className="text-primary-600 hover:text-primary-800"
+          title="Atualizar status"
+        >
+          <RefreshCw className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Status da transmissão atual */}
-      {transmissionStatus.is_live && transmissionStatus.transmission && (
+      {streamStatus?.is_live && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
               <div className="h-3 w-3 bg-red-500 rounded-full animate-pulse mr-3"></div>
-              <h2 className="text-lg font-semibold text-green-800">TRANSMISSÃO AO VIVO</h2>
+              <h2 className="text-lg font-semibold text-green-800">
+                TRANSMISSÃO ATIVA - {streamStatus.stream_type?.toUpperCase()}
+              </h2>
             </div>
             <button
               onClick={handleStopTransmission}
@@ -557,380 +460,173 @@ const IniciarTransmissao: React.FC = () => {
             </button>
           </div>
 
-          <div className="mb-4">
-            <h3 className="font-medium text-green-800">{transmissionStatus.transmission.titulo}</h3>
-            <p className="text-sm text-green-600">
-              Iniciada em: {new Date(transmissionStatus.transmission.data_inicio).toLocaleString()}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <div className="bg-white p-4 rounded-md">
-              <div className="flex items-center">
-                <Users className="h-5 w-5 text-blue-600 mr-2" />
-                <div>
-                  <p className="text-sm text-gray-600">Espectadores</p>
-                  <p className="text-xl font-bold">{transmissionStatus.transmission.stats.viewers}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-md">
-              <div className="flex items-center">
-                <Activity className="h-5 w-5 text-green-600 mr-2" />
-                <div>
-                  <p className="text-sm text-gray-600">Bitrate</p>
-                  <p className="text-xl font-bold">{transmissionStatus.transmission.stats.bitrate} kbps</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-md">
-              <div className="flex items-center">
-                <Wifi className="h-5 w-5 text-purple-600 mr-2" />
-                <div>
-                  <p className="text-sm text-gray-600">Tempo Ativo</p>
-                  <p className="text-xl font-bold">{transmissionStatus.transmission.stats.uptime}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-md">
-              <div className="flex items-center">
-                <Radio className="h-5 w-5 text-orange-600 mr-2" />
-                <div>
-                  <p className="text-sm text-gray-600">Plataformas</p>
-                  <p className="text-xl font-bold">{transmissionStatus.transmission.platforms.length}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Plataformas ativas */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {transmissionStatus.transmission.platforms.map((tp, index) => {
-              const IconComponent = getIconComponent(tp.user_platform.platform.icone);
-              const statusColor = tp.status === 'ativa' ? 'bg-green-100 border-green-200 text-green-800' :
-                                tp.status === 'erro' ? 'bg-red-100 border-red-200 text-red-800' :
-                                'bg-gray-100 border-gray-200 text-gray-800';
-
-              return (
-                <div key={index} className={`p-3 rounded-lg border ${statusColor}`}>
-                  <div className="flex items-center space-x-2">
-                    <IconComponent className="h-5 w-5" />
-                    <div>
-                      <p className="font-medium">{tp.user_platform.platform.nome}</p>
-                      <p className="text-sm capitalize">{tp.status}</p>
-                    </div>
+          {streamStatus.transmission && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+              <div className="bg-white p-4 rounded-md">
+                <div className="flex items-center">
+                  <Users className="h-5 w-5 text-blue-600 mr-2" />
+                  <div>
+                    <p className="text-sm text-gray-600">Espectadores</p>
+                    <p className="text-xl font-bold">{streamStatus.transmission.stats.viewers}</p>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+
+              <div className="bg-white p-4 rounded-md">
+                <div className="flex items-center">
+                  <Zap className="h-5 w-5 text-green-600 mr-2" />
+                  <div>
+                    <p className="text-sm text-gray-600">Bitrate</p>
+                    <p className="text-xl font-bold">{streamStatus.transmission.stats.bitrate} kbps</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-4 rounded-md">
+                <div className="flex items-center">
+                  <Clock className="h-5 w-5 text-purple-600 mr-2" />
+                  <div>
+                    <p className="text-sm text-gray-600">Tempo Ativo</p>
+                    <p className="text-xl font-bold">{streamStatus.transmission.stats.uptime}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-4 rounded-md">
+                <div className="flex items-center">
+                  <Activity className="h-5 w-5 text-orange-600 mr-2" />
+                  <div>
+                    <p className="text-sm text-gray-600">Plataformas</p>
+                    <p className="text-xl font-bold">{streamStatus.transmission.platforms.length}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {streamStatus.transmission?.platforms && streamStatus.transmission.platforms.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-green-800 mb-2">Plataformas Conectadas:</h3>
+              <div className="flex flex-wrap gap-2">
+                {streamStatus.transmission.platforms.map((platform, index) => (
+                  <span
+                    key={index}
+                    className={`px-3 py-1 rounded-full text-sm ${
+                      platform.status === 'conectada' 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}
+                  >
+                    {platform.user_platform.platform.nome} - {platform.status}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Configuração de plataformas */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-gray-800">Plataformas Configuradas</h2>
-          <button
-            onClick={() => setShowPlatformConfig(!showPlatformConfig)}
-            className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 flex items-center"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Adicionar Plataforma
-          </button>
-        </div>
-
-        {/* Lista de plataformas configuradas */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-          {userPlatforms.map((up) => {
-            const IconComponent = getIconComponent(up.platform.icone);
-            return (
-              <div key={up.id} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-2">
-                    <IconComponent className="h-5 w-5 text-primary-600" />
-                    <span className="font-medium">{up.platform.nome}</span>
-                  </div>
-                  <button
-                    onClick={() => removePlatform(up.id)}
-                    className="text-red-600 hover:text-red-800"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-                <p className="text-sm text-gray-600 truncate">
-                  Key: {up.stream_key.substring(0, 20)}...
-                </p>
-                {up.titulo_padrao && (
-                  <p className="text-sm text-gray-600 truncate">
-                    Título: {up.titulo_padrao}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Formulário para nova plataforma */}
-        {showPlatformConfig && (
-          <form onSubmit={handleConfigurePlatform} className="border-t pt-6 space-y-4">
-            <h3 className="text-lg font-medium text-gray-800">Configurar Nova Plataforma</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Formulário de configuração */}
+      {!streamStatus?.is_live && (
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-6">Configurar Nova Transmissão</h2>
+          
+          <div className="space-y-6">
+            {/* Informações básicas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Plataforma
+                <label htmlFor="titulo" className="block text-sm font-medium text-gray-700 mb-2">
+                  Título da Transmissão *
+                </label>
+                <input
+                  id="titulo"
+                  type="text"
+                  value={settings.titulo}
+                  onChange={(e) => setSettings(prev => ({ ...prev, titulo: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Digite o título da transmissão"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="playlist" className="block text-sm font-medium text-gray-700 mb-2">
+                  Playlist *
                 </label>
                 <select
-                  value={newPlatformForm.platform_id}
-                  onChange={(e) => setNewPlatformForm(prev => ({ ...prev, platform_id: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  required
+                  id="playlist"
+                  value={settings.playlist_id}
+                  onChange={(e) => setSettings(prev => ({ ...prev, playlist_id: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                 >
-                  <option value="">Selecione uma plataforma</option>
-                  {platforms.filter(p => !userPlatforms.some(up => up.id_platform === p.id)).map((platform) => (
-                    <option key={platform.id} value={platform.id}>
-                      {platform.nome}
+                  <option value="">Selecione uma playlist</option>
+                  {playlists.map((playlist) => (
+                    <option key={playlist.id} value={playlist.id}>
+                      {playlist.nome} ({playlist.total_videos || 0} vídeos)
                     </option>
                   ))}
                 </select>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Stream Key
-                </label>
-                <input
-                  type="text"
-                  value={newPlatformForm.stream_key}
-                  onChange={(e) => setNewPlatformForm(prev => ({ ...prev, stream_key: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Chave de transmissão da plataforma"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  URL RTMP (opcional)
-                </label>
-                <input
-                  type="text"
-                  value={newPlatformForm.rtmp_url}
-                  onChange={(e) => setNewPlatformForm(prev => ({ ...prev, rtmp_url: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="URL personalizada (opcional)"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Título Padrão (opcional)
-                </label>
-                <input
-                  type="text"
-                  value={newPlatformForm.titulo_padrao}
-                  onChange={(e) => setNewPlatformForm(prev => ({ ...prev, titulo_padrao: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Título padrão para transmissões"
-                />
-              </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Descrição Padrão (opcional)
+              <label htmlFor="descricao" className="block text-sm font-medium text-gray-700 mb-2">
+                Descrição
               </label>
               <textarea
-                value={newPlatformForm.descricao_padrao}
-                onChange={(e) => setNewPlatformForm(prev => ({ ...prev, descricao_padrao: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                id="descricao"
+                value={settings.descricao}
+                onChange={(e) => setSettings(prev => ({ ...prev, descricao: e.target.value }))}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                 rows={3}
-                placeholder="Descrição padrão para transmissões"
+                placeholder="Descrição da transmissão (opcional)"
               />
             </div>
 
-            <div className="flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={() => setShowPlatformConfig(false)}
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
-              >
-                Salvar Plataforma
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-
-      {/* Gerenciamento de Logos */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-gray-800">Logos para Transmissão</h2>
-          <button
-            onClick={() => setShowLogoUpload(!showLogoUpload)}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 flex items-center"
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            Enviar Logo
-          </button>
-        </div>
-
-        {/* Lista de logos */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
-          {logos.map((logo) => (
-            <div key={logo.id} className="border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium truncate">{logo.nome}</span>
-                <button
-                  onClick={() => removeLogo(logo.id)}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="aspect-video bg-gray-100 rounded-md mb-2 flex items-center justify-center overflow-hidden">
-                <img
-                  src={logo.url}
-                  alt={logo.nome}
-                  className="max-w-full max-h-full object-contain"
-                />
-              </div>
-              <p className="text-xs text-gray-500">
-                {(logo.tamanho / 1024).toFixed(1)} KB
-              </p>
-            </div>
-          ))}
-        </div>
-
-        {/* Formulário para upload de logo */}
-        {showLogoUpload && (
-          <form onSubmit={handleLogoUpload} className="border-t pt-6 space-y-4">
-            <h3 className="text-lg font-medium text-gray-800">Enviar Nova Logo</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Configurações avançadas */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nome da Logo
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={settings.enable_recording}
+                    onChange={(e) => setSettings(prev => ({ ...prev, enable_recording: e.target.checked }))}
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded mr-2"
+                  />
+                  <span className="text-sm text-gray-700">Habilitar Gravação</span>
+                </label>
+              </div>
+
+              <div>
+                <label htmlFor="bitrate" className="block text-sm font-medium text-gray-700 mb-2">
+                  Bitrate Override (kbps)
                 </label>
                 <input
-                  type="text"
-                  value={logoUploadForm.nome}
-                  onChange={(e) => setLogoUploadForm(prev => ({ ...prev, nome: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Nome para identificar a logo"
-                  required
+                  id="bitrate"
+                  type="number"
+                  min="500"
+                  max="10000"
+                  value={settings.bitrate_override || ''}
+                  onChange={(e) => setSettings(prev => ({ 
+                    ...prev, 
+                    bitrate_override: e.target.value ? parseInt(e.target.value) : undefined 
+                  }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Automático"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Arquivo da Logo
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setLogoUploadForm(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={() => setShowLogoUpload(false)}
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-              >
-                Enviar Logo
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-
-      {/* Configurações Avançadas */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-gray-800">Configurações de Transmissão</h2>
-          <button
-            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 flex items-center"
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Nova Configuração
-          </button>
-        </div>
-
-        {/* Lista de configurações */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {transmissionSettings.map((setting) => (
-            <div key={setting.id} className="border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium">{setting.nome}</span>
-                <div className="flex items-center space-x-2">
-                  {setting.logo && (
-                    <Image className="h-4 w-4 text-green-600" title="Com logo" />
-                  )}
-                  {setting.embaralhar_videos && (
-                    <Activity className="h-4 w-4 text-blue-600" title="Embaralhar vídeos" />
-                  )}
-                </div>
-              </div>
-              <div className="text-sm text-gray-600 space-y-1">
-                <p>Resolução: {setting.resolucao} @ {setting.fps}fps</p>
-                <p>Bitrate: {setting.bitrate} kbps</p>
-                {setting.logo && (
-                  <p>Logo: {setting.logo_posicao} ({setting.logo_opacidade}%)</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Formulário para nova configuração */}
-        {showAdvancedSettings && (
-          <form onSubmit={handleSaveAdvancedSettings} className="border-t pt-6 space-y-6">
-            <h3 className="text-lg font-medium text-gray-800">Nova Configuração de Transmissão</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nome da Configuração
-                </label>
-                <input
-                  type="text"
-                  value={advancedSettingsForm.nome}
-                  onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, nome: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Logo
+                <label htmlFor="logo" className="block text-sm font-medium text-gray-700 mb-2">
+                  Logo/Marca d'água
                 </label>
                 <select
-                  value={advancedSettingsForm.id_logo}
-                  onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, id_logo: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  id="logo"
+                  value={settings.logo_id || ''}
+                  onChange={(e) => setSettings(prev => ({ 
+                    ...prev, 
+                    logo_id: e.target.value ? parseInt(e.target.value) : undefined 
+                  }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                 >
                   <option value="">Sem logo</option>
                   {logos.map((logo) => (
@@ -940,341 +636,367 @@ const IniciarTransmissao: React.FC = () => {
                   ))}
                 </select>
               </div>
+            </div>
 
-              {advancedSettingsForm.id_logo && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Posição da Logo
-                    </label>
-                    <select
-                      value={advancedSettingsForm.logo_posicao}
-                      onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, logo_posicao: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                    >
-                      <option value="top-left">Superior Esquerdo</option>
-                      <option value="top-right">Superior Direito</option>
-                      <option value="bottom-left">Inferior Esquerdo</option>
-                      <option value="bottom-right">Inferior Direito</option>
-                      <option value="center">Centro</option>
-                    </select>
+            {/* Configurações da logo */}
+            {settings.logo_id && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-md">
+                <div>
+                  <label htmlFor="logo_position" className="block text-sm font-medium text-gray-700 mb-2">
+                    Posição da Logo
+                  </label>
+                  <select
+                    id="logo_position"
+                    value={settings.logo_position}
+                    onChange={(e) => setSettings(prev => ({ 
+                      ...prev, 
+                      logo_position: e.target.value as any 
+                    }))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="top-left">Superior Esquerda</option>
+                    <option value="top-right">Superior Direita</option>
+                    <option value="bottom-left">Inferior Esquerda</option>
+                    <option value="bottom-right">Inferior Direita</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="logo_opacity" className="block text-sm font-medium text-gray-700 mb-2">
+                    Opacidade da Logo ({settings.logo_opacity}%)
+                  </label>
+                  <input
+                    id="logo_opacity"
+                    type="range"
+                    min="10"
+                    max="100"
+                    value={settings.logo_opacity}
+                    onChange={(e) => setSettings(prev => ({ 
+                      ...prev, 
+                      logo_opacity: parseInt(e.target.value) 
+                    }))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Seleção de plataformas */}
+      {!streamStatus?.is_live && (
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-gray-800">Plataformas de Transmissão</h2>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setShowLogoModal(true)}
+                className="text-primary-600 hover:text-primary-800 flex items-center text-sm"
+              >
+                <Upload className="h-4 w-4 mr-1" />
+                Upload Logo
+              </button>
+              <button
+                onClick={() => setShowPlatformModal(true)}
+                className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 flex items-center text-sm"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Configurar Plataforma
+              </button>
+            </div>
+          </div>
+
+          {userPlatforms.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <p className="mb-4">Nenhuma plataforma configurada</p>
+              <button
+                onClick={() => setShowPlatformModal(true)}
+                className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700"
+              >
+                Configurar Primeira Plataforma
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {userPlatforms.map((userPlatform) => (
+                <div
+                  key={userPlatform.id}
+                  className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                    settings.platform_ids.includes(userPlatform.id)
+                      ? 'border-primary-500 bg-primary-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => togglePlatformSelection(userPlatform.id)}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-gray-900">{userPlatform.platform.nome}</h3>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={settings.platform_ids.includes(userPlatform.id)}
+                        onChange={() => togglePlatformSelection(userPlatform.id)}
+                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemovePlatform(userPlatform.id);
+                        }}
+                        className="text-red-600 hover:text-red-800"
+                        title="Remover plataforma"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Opacidade da Logo ({advancedSettingsForm.logo_opacidade}%)
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={advancedSettingsForm.logo_opacidade}
-                      onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, logo_opacidade: parseInt(e.target.value) }))}
-                      className="w-full"
-                    />
+                  
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p><strong>Stream Key:</strong> {userPlatform.stream_key.substring(0, 10)}...</p>
+                    {userPlatform.titulo_padrao && (
+                      <p><strong>Título:</strong> {userPlatform.titulo_padrao}</p>
+                    )}
+                    <span className={`inline-block px-2 py-1 rounded-full text-xs ${
+                      userPlatform.ativo ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {userPlatform.ativo ? 'Ativa' : 'Inativa'}
+                    </span>
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tamanho da Logo
-                    </label>
-                    <select
-                      value={advancedSettingsForm.logo_tamanho}
-                      onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, logo_tamanho: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                    >
-                      <option value="small">Pequeno</option>
-                      <option value="medium">Médio</option>
-                      <option value="large">Grande</option>
-                    </select>
-                  </div>
-                </>
-              )}
+          {getSelectedPlatforms().length > 0 && (
+            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+              <h3 className="text-blue-900 font-medium mb-2">Plataformas Selecionadas:</h3>
+              <div className="flex flex-wrap gap-2">
+                {getSelectedPlatforms().map((platform) => (
+                  <span
+                    key={platform.id}
+                    className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm"
+                  >
+                    {platform.platform.nome}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
+      {/* Botão de iniciar transmissão */}
+      {!streamStatus?.is_live && (
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex justify-center">
+            <button
+              onClick={handleStartTransmission}
+              disabled={loading || !settings.titulo || !settings.playlist_id || settings.platform_ids.length === 0}
+              className="bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center text-lg font-medium"
+            >
+              <Play className="h-6 w-6 mr-3" />
+              {loading ? 'Iniciando Transmissão...' : 'Iniciar Transmissão'}
+            </button>
+          </div>
+          
+          {(!settings.titulo || !settings.playlist_id || settings.platform_ids.length === 0) && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <div className="flex items-start">
+                <AlertCircle className="h-4 w-4 text-yellow-600 mr-2 mt-0.5" />
+                <div className="text-yellow-800 text-sm">
+                  <p className="font-medium mb-1">Preencha os campos obrigatórios:</p>
+                  <ul className="space-y-1">
+                    {!settings.titulo && <li>• Título da transmissão</li>}
+                    {!settings.playlist_id && <li>• Playlist</li>}
+                    {settings.platform_ids.length === 0 && <li>• Pelo menos uma plataforma</li>}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal de configuração de plataforma */}
+      {showPlatformModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold">Configurar Plataforma</h3>
+                <button
+                  onClick={() => setShowPlatformModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Resolução
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Plataforma *
                 </label>
                 <select
-                  value={advancedSettingsForm.resolucao}
-                  onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, resolucao: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  value={platformConfig.platform_id}
+                  onChange={(e) => setPlatformConfig(prev => ({ ...prev, platform_id: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                 >
-                  <option value="720p">720p (HD)</option>
-                  <option value="1080p">1080p (Full HD)</option>
-                  <option value="1440p">1440p (2K)</option>
-                  <option value="4k">4K (Ultra HD)</option>
+                  <option value="">Selecione uma plataforma</option>
+                  {platforms.map((platform) => (
+                    <option key={platform.id} value={platform.id}>
+                      {platform.nome}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  FPS
-                </label>
-                <select
-                  value={advancedSettingsForm.fps}
-                  onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, fps: parseInt(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                >
-                  <option value={24}>24 FPS</option>
-                  <option value={30}>30 FPS</option>
-                  <option value={60}>60 FPS</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Bitrate (kbps)
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Chave de Transmissão (Stream Key) *
                 </label>
                 <input
-                  type="number"
-                  min="500"
-                  max="10000"
-                  value={advancedSettingsForm.bitrate}
-                  onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, bitrate: parseInt(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  type="text"
+                  value={platformConfig.stream_key}
+                  onChange={(e) => setPlatformConfig(prev => ({ ...prev, stream_key: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Cole aqui a stream key da plataforma"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  URL RTMP Customizada (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={platformConfig.rtmp_url}
+                  onChange={(e) => setPlatformConfig(prev => ({ ...prev, rtmp_url: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="rtmp://servidor.com/live/"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Título Padrão
+                </label>
+                <input
+                  type="text"
+                  value={platformConfig.titulo_padrao}
+                  onChange={(e) => setPlatformConfig(prev => ({ ...prev, titulo_padrao: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Título que aparecerá na plataforma"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Descrição Padrão
+                </label>
+                <textarea
+                  value={platformConfig.descricao_padrao}
+                  onChange={(e) => setPlatformConfig(prev => ({ ...prev, descricao_padrao: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  rows={3}
+                  placeholder="Descrição que aparecerá na plataforma"
                 />
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="flex items-center space-x-4">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={advancedSettingsForm.embaralhar_videos}
-                    onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, embaralhar_videos: e.target.checked }))}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Embaralhar vídeos da playlist</span>
-                </label>
-
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={advancedSettingsForm.repetir_playlist}
-                    onChange={(e) => setAdvancedSettingsForm(prev => ({ ...prev, repetir_playlist: e.target.checked }))}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Repetir playlist</span>
-                </label>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-3">
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
               <button
-                type="button"
-                onClick={() => setShowAdvancedSettings(false)}
+                onClick={() => setShowPlatformModal(false)}
                 className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
               >
                 Cancelar
               </button>
               <button
-                type="submit"
-                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+                onClick={handleConfigurePlatform}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
               >
                 Salvar Configuração
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-
-      {/* Iniciar nova transmissão */}
-      {!transmissionStatus.is_live && (
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-6">Iniciar Nova Transmissão</h2>
-          
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Título da Transmissão *
-                </label>
-                <input
-                  type="text"
-                  value={transmissionForm.titulo}
-                  onChange={(e) => setTransmissionForm(prev => ({ ...prev, titulo: e.target.value }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Digite o título da transmissão"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Playlist *
-                </label>
-                <select
-                  value={selectedPlaylist}
-                  onChange={(e) => setSelectedPlaylist(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  required
-                >
-                  <option value="">Selecione uma playlist</option>
-                  {playlists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>
-                      {playlist.nome}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Configurações de Transmissão (opcional)
-                </label>
-                <select
-                  value={selectedSettings}
-                  onChange={(e) => setSelectedSettings(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                >
-                  <option value="">Configuração padrão</option>
-                  {transmissionSettings.map((setting) => (
-                    <option key={setting.id} value={setting.id}>
-                      {setting.nome}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Bitrate Personalizado (kbps)
-                </label>
-                <input
-                  type="number"
-                  min="500"
-                  max="10000"
-                  value={transmissionForm.bitrate_override}
-                  onChange={(e) => setTransmissionForm(prev => ({ ...prev, bitrate_override: e.target.value }))}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Deixe vazio para usar o padrão"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Será limitado ao máximo permitido pelo seu plano
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Descrição (opcional)
-              </label>
-              <textarea
-                value={transmissionForm.descricao}
-                onChange={(e) => setTransmissionForm(prev => ({ ...prev, descricao: e.target.value }))}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                rows={3}
-                placeholder="Descrição da transmissão"
-              />
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={transmissionForm.enable_recording}
-                  onChange={(e) => setTransmissionForm(prev => ({ ...prev, enable_recording: e.target.checked }))}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-                />
-                <span className="ml-2 text-sm text-gray-700">Habilitar gravação da transmissão</span>
-              </label>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Selecionar Plataformas *
-              </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {userPlatforms.map((up) => {
-                  const IconComponent = getIconComponent(up.platform.icone);
-                  const isSelected = selectedPlatforms.includes(up.id);
-                  
-                  return (
-                    <label
-                      key={up.id}
-                      className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                        isSelected 
-                          ? 'border-primary-500 bg-primary-50' 
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedPlatforms(prev => [...prev, up.id]);
-                          } else {
-                            setSelectedPlatforms(prev => prev.filter(id => id !== up.id));
-                          }
-                        }}
-                        className="sr-only"
-                      />
-                      <IconComponent className="h-5 w-5 text-primary-600 mr-3" />
-                      <span className="font-medium">{up.platform.nome}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              {userPlatforms.length === 0 && (
-                <p className="text-gray-500 text-sm">
-                  Nenhuma plataforma configurada. Configure pelo menos uma plataforma acima.
-                </p>
-              )}
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={handleStartTransmission}
-                disabled={loading || userPlatforms.length === 0}
-                className="bg-green-600 text-white px-6 py-3 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
-              >
-                <Play className="h-5 w-5 mr-2" />
-                {loading ? 'Iniciando...' : 'Iniciar Transmissão'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Instruções */}
-      <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
-        <h3 className="text-lg font-semibold text-blue-900 mb-4">Como usar</h3>
-        <div className="space-y-3 text-blue-800">
-          <div className="flex items-start">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">1</div>
-            <p>Configure suas plataformas de streaming (YouTube, Facebook, etc.) com as chaves de transmissão</p>
-          </div>
-          <div className="flex items-start">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">2</div>
-            <p>Envie logos e configure as opções de transmissão (posição, opacidade, embaralhar vídeos)</p>
-          </div>
-          <div className="flex items-start">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">3</div>
-            <p>Selecione uma playlist, configure as opções desejadas e escolha as plataformas</p>
-          </div>
-          <div className="flex items-start">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">4</div>
-            <p>Clique em "Iniciar Transmissão" e sua playlist será transmitida automaticamente para todas as plataformas</p>
-          </div>
-          <div className="flex items-start">
-            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">5</div>
-            <p><strong>Para OBS:</strong> Use os dados de conexão na página "Dados de Conexão" para transmitir via OBS/Streamlabs</p>
+      {/* Modal de upload de logo */}
+      {showLogoModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold">Upload de Logo</h3>
+                <button
+                  onClick={() => setShowLogoModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nome da Logo *
+                </label>
+                <input
+                  type="text"
+                  value={logoName}
+                  onChange={(e) => setLogoName(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Digite um nome para a logo"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Arquivo da Logo *
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Formatos aceitos: PNG, JPG, GIF, WebP (máx. 10MB)
+                </p>
+              </div>
+
+              {logoFile && (
+                <div className="mt-4">
+                  <img
+                    src={URL.createObjectURL(logoFile)}
+                    alt="Preview"
+                    className="max-w-full h-32 object-contain border border-gray-200 rounded"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowLogoModal(false)}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleUploadLogo}
+                disabled={!logoFile || !logoName}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+              >
+                Enviar Logo
+              </button>
+            </div>
           </div>
         </div>
-        
-        <div className="mt-4 p-3 bg-blue-100 rounded-md">
-          <h4 className="text-blue-900 font-medium mb-2">🎥 Duas formas de transmitir</h4>
-          <div className="text-blue-800 text-sm space-y-1">
-            <p>• <strong>Transmissão Direta:</strong> Use esta página para transmitir playlists automaticamente</p>
-            <p>• <strong>Transmissão OBS:</strong> Configure seu OBS com os dados da página "Dados de Conexão"</p>
-            <p>• <strong>Gravação:</strong> Vídeos são salvos automaticamente no servidor quando habilitado</p>
-            <p>• <strong>Limites:</strong> Bitrate e espectadores são controlados automaticamente pelo seu plano</p>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

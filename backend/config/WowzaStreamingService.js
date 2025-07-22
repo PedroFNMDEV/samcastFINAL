@@ -1,4 +1,5 @@
 const DigestFetch = require('digest-fetch');
+const fetch = require('node-fetch');
 const db = require('./database');
 
 class WowzaStreamingService {
