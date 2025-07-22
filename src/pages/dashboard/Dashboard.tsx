@@ -5,10 +5,20 @@ import { useStream } from '../../context/StreamContext';
 import VideoPlayer from '../../components/VideoPlayer';
 import {
   Settings, Users, BarChart, FileVideo,
-  PlayCircle, Play, Smartphone, RefreshCw,
+  PlayCircle, Play, Smartphone, RefreshCw, Radio, Square,
   FolderPlus, Calendar, Youtube, Wifi, ArrowLeftRight, 
-  Megaphone, Radio, Activity, Clock, Eye, Zap, Server
+  Megaphone, Activity, Clock, Eye, Zap, Server, AlertCircle
 } from 'lucide-react';
+
+interface OBSStreamStatus {
+  is_live: boolean;
+  is_active: boolean;
+  viewers: number;
+  bitrate: number;
+  uptime: string;
+  recording: boolean;
+  platforms: any[];
+}
 
 interface Playlist {
   id: number;
@@ -30,6 +40,7 @@ const Dashboard: React.FC = () => {
   const { user, getToken } = useAuth();
   const { streamData } = useStream();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [obsStatus, setObsStatus] = useState<OBSStreamStatus | null>(null);
   const [selectedPlaylist, setSelectedPlaylist] = useState<string>('');
   const [playlistVideos, setPlaylistVideos] = useState<PlaylistVideo[]>([]);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
@@ -38,6 +49,11 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadPlaylists();
+    checkOBSStatus();
+    
+    // Atualizar status OBS a cada 30 segundos
+    const interval = setInterval(checkOBSStatus, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadPlaylists = async () => {
@@ -50,6 +66,51 @@ const Dashboard: React.FC = () => {
       setPlaylists(data);
     } catch (error) {
       console.error('Erro ao carregar playlists:', error);
+    }
+  };
+
+  const checkOBSStatus = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/obs-status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setObsStatus(data.obs_stream);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao verificar status OBS:', error);
+    }
+  };
+
+  const stopOBSStream = async () => {
+    if (!confirm('Deseja realmente finalizar a transmissão OBS?')) return;
+    
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/obs-stop', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        toast.success('Transmissão OBS finalizada com sucesso!');
+        checkOBSStatus();
+      } else {
+        toast.error(result.error || 'Erro ao finalizar transmissão');
+      }
+    } catch (error) {
+      console.error('Erro ao parar stream OBS:', error);
+      toast.error('Erro ao finalizar transmissão');
     }
   };
 
@@ -123,18 +184,109 @@ const Dashboard: React.FC = () => {
     return null;
   };
 
+  // Determinar se há alguma transmissão ativa (OBS ou playlist)
+  const hasActiveTransmission = streamData.isLive || (obsStatus?.is_live);
+  const totalViewers = (streamData.viewers || 0) + (obsStatus?.viewers || 0);
+  const activeBitrate = streamData.isLive ? streamData.bitrate : (obsStatus?.bitrate || 0);
+  const activeUptime = streamData.isLive ? streamData.uptime : (obsStatus?.uptime || '00:00:00');
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
         
-        {streamData.isLive && (
+        {hasActiveTransmission && (
           <div className="px-4 py-2 rounded-full flex items-center space-x-2 bg-green-100 text-green-600">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="font-medium">Transmissão Ativa</span>
+            <span className="font-medium">
+              {streamData.isLive && obsStatus?.is_live ? 'Múltiplas Transmissões' :
+               streamData.isLive ? 'Transmissão Playlist' :
+               obsStatus?.is_live ? 'Transmissão OBS' : 'Transmissão Ativa'}
+            </span>
           </div>
         )}
       </div>
+
+      {/* Status das Transmissões Ativas */}
+      {(streamData.isLive || obsStatus?.is_live) && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-green-800">Status das Transmissões</h2>
+            <button
+              onClick={() => {
+                checkOBSStatus();
+                // Atualizar também status de playlist se necessário
+              }}
+              className="text-green-600 hover:text-green-800"
+              title="Atualizar status"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Transmissão de Playlist */}
+            {streamData.isLive && (
+              <div className="bg-white p-4 rounded-lg border border-green-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-green-800 flex items-center">
+                    <PlayCircle className="h-4 w-4 mr-2" />
+                    Transmissão Playlist
+                  </h3>
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                </div>
+                <div className="text-sm text-green-700 space-y-1">
+                  <p>Espectadores: {streamData.viewers}</p>
+                  <p>Bitrate: {streamData.bitrate} kbps</p>
+                  <p>Tempo: {streamData.uptime}</p>
+                  <p>Plataformas: {connectedPlatforms.length}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Transmissão OBS */}
+            {obsStatus?.is_live && (
+              <div className="bg-white p-4 rounded-lg border border-blue-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-blue-800 flex items-center">
+                    <Radio className="h-4 w-4 mr-2" />
+                    Transmissão OBS
+                  </h3>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <button
+                      onClick={stopOBSStream}
+                      className="text-red-600 hover:text-red-800 text-xs"
+                      title="Finalizar transmissão OBS"
+                    >
+                      <Square className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+                <div className="text-sm text-blue-700 space-y-1">
+                  <p>Espectadores: {obsStatus.viewers}</p>
+                  <p>Bitrate: {obsStatus.bitrate} kbps</p>
+                  <p>Tempo: {obsStatus.uptime}</p>
+                  <p>Gravação: {obsStatus.recording ? 'ATIVA' : 'INATIVA'}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Aviso sobre múltiplas transmissões */}
+          {streamData.isLive && obsStatus?.is_live && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <div className="flex items-start">
+                <AlertCircle className="h-4 w-4 text-yellow-600 mr-2 mt-0.5" />
+                <div className="text-yellow-800 text-sm">
+                  <p className="font-medium">Múltiplas transmissões ativas</p>
+                  <p>Você tem tanto uma transmissão de playlist quanto uma transmissão OBS ativas simultaneamente.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stream Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -145,7 +297,7 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Espectadores</p>
-              <p className="text-2xl font-bold text-gray-900">{streamData.viewers}</p>
+              <p className="text-2xl font-bold text-gray-900">{totalViewers}</p>
               <p className="text-xs text-gray-400">Em tempo real</p>
             </div>
           </div>
@@ -158,7 +310,7 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Bitrate</p>
-              <p className="text-2xl font-bold text-gray-900">{streamData.bitrate}</p>
+              <p className="text-2xl font-bold text-gray-900">{activeBitrate}</p>
               <p className="text-xs text-gray-400">kbps</p>
             </div>
           </div>
@@ -171,7 +323,7 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Duração</p>
-              <p className="text-2xl font-bold text-gray-900">{streamData.uptime}</p>
+              <p className="text-2xl font-bold text-gray-900">{activeUptime}</p>
               <p className="text-xs text-gray-400">Tempo online</p>
             </div>
           </div>
@@ -184,7 +336,9 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-500">Plataformas</p>
-              <p className="text-2xl font-bold text-gray-900">{connectedPlatforms.length}</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {connectedPlatforms.length + (obsStatus?.platforms?.length || 0)}
+              </p>
               <p className="text-xs text-gray-400">Conectadas</p>
             </div>
           </div>
@@ -192,14 +346,20 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Connected Platforms */}
-      {streamData.isLive && connectedPlatforms.length > 0 && (
+      {hasActiveTransmission && (connectedPlatforms.length > 0 || (obsStatus?.platforms?.length || 0) > 0) && (
         <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Plataformas Conectadas</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {connectedPlatforms.map((platform) => (
               <div key={platform.id} className="flex items-center space-x-2 p-3 bg-green-50 rounded-lg border border-green-200">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-medium text-green-800">{platform.name}</span>
+                <span className="text-sm font-medium text-green-800">{platform.name} (Playlist)</span>
+              </div>
+            ))}
+            {obsStatus?.platforms?.map((platform, index) => (
+              <div key={`obs-${index}`} className="flex items-center space-x-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium text-blue-800">{platform.name || 'OBS'} (OBS)</span>
               </div>
             ))}
           </div>
@@ -258,6 +418,11 @@ const Dashboard: React.FC = () => {
               <h2 className="ml-2 text-xl font-semibold text-gray-800">Player de Transmissão</h2>
             </div>
             <div className="flex items-center space-x-2">
+              {obsStatus?.is_live && (
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                  OBS ATIVO
+                </span>
+              )}
               <button
                 onClick={() => setShowPlaylistModal(true)}
                 className="px-3 py-1 bg-primary-600 text-white rounded-md hover:bg-primary-700 text-sm flex items-center"
@@ -279,7 +444,10 @@ const Dashboard: React.FC = () => {
 
           {/* Player */}
           <div className="relative">
-            <VideoPlayer />
+            <VideoPlayer 
+              playlistVideo={getCurrentVideo()}
+              onVideoEnd={handleVideoEnd}
+            />
             
             {/* Overlay para playlist */}
             {isPlayingPlaylist && getCurrentVideo() && (
@@ -290,6 +458,19 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div className="text-xs opacity-80 truncate max-w-48">
                   {getCurrentVideo()?.nome}
+                </div>
+              </div>
+            )}
+            
+            {/* Overlay para OBS */}
+            {obsStatus?.is_live && !isPlayingPlaylist && (
+              <div className="absolute top-2 left-2 bg-black bg-opacity-70 text-white px-3 py-1 rounded-md text-sm">
+                <div className="flex items-center space-x-2">
+                  <Radio className="h-3 w-3" />
+                  <span>Transmissão OBS Ativa</span>
+                </div>
+                <div className="text-xs opacity-80">
+                  {obsStatus.viewers} espectadores • {obsStatus.bitrate} kbps
                 </div>
               </div>
             )}
@@ -490,10 +671,14 @@ const Dashboard: React.FC = () => {
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Selecionar Playlist</h3>
             
-            {streamData.isLive && (
+            {hasActiveTransmission && (
               <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
                 <p className="text-yellow-800 text-sm">
-                  ⚠️ Há uma transmissão ao vivo ativa. A playlist será iniciada após o término da transmissão atual.
+                  ⚠️ {streamData.isLive && obsStatus?.is_live ? 
+                    'Há transmissões ativas (Playlist + OBS). A nova playlist será reproduzida localmente.' :
+                    streamData.isLive ? 
+                    'Há uma transmissão de playlist ativa. A nova playlist será reproduzida localmente.' :
+                    'Há uma transmissão OBS ativa. A playlist será reproduzida localmente.'}
                 </p>
               </div>
             )}

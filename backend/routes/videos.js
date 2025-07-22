@@ -107,6 +107,24 @@ router.post('/upload', authMiddleware, upload.single('video'), async (req, res) 
     const duracao = parseInt(req.body.duracao) || 0;
     const tamanho = parseInt(req.body.tamanho) || req.file.size;
 
+    // Verificar espaço disponível do usuário
+    const [userSpaceRows] = await db.execute(
+      'SELECT espaco, espaco_usado FROM streamings WHERE codigo = ? OR codigo_cliente = ?',
+      [userId, userId]
+    );
+
+    if (userSpaceRows.length > 0) {
+      const userSpace = userSpaceRows[0];
+      const spaceMB = Math.ceil(tamanho / (1024 * 1024));
+      const availableSpace = userSpace.espaco - userSpace.espaco_usado;
+      
+      if (spaceMB > availableSpace) {
+        return res.status(400).json({ 
+          error: `Espaço insuficiente. Necessário: ${spaceMB}MB, Disponível: ${availableSpace}MB` 
+        });
+      }
+    }
+
     // Caminho relativo para salvar no banco
     const relativePath = `/${userEmail}/${folderId}/${req.file.filename}`;
 
@@ -121,10 +139,12 @@ router.post('/upload', authMiddleware, upload.single('video'), async (req, res) 
 
     // Atualizar espaço usado do usuário
     const spaceMB = Math.ceil(tamanho / (1024 * 1024));
-    await db.execute(
-      'UPDATE revendas SET espaco = espaco - ? WHERE codigo = ?',
-      [spaceMB, userId]
-    );
+    if (userSpaceRows.length > 0) {
+      await db.execute(
+        'UPDATE streamings SET espaco_usado = espaco_usado + ? WHERE codigo = ? OR codigo_cliente = ?',
+        [spaceMB, userId, userId]
+      );
+    }
 
     res.status(201).json({
       id: result.insertId,

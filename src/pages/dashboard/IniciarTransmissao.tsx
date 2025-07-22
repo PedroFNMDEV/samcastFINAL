@@ -111,7 +111,9 @@ const IniciarTransmissao: React.FC = () => {
   // Form para transmissão
   const [transmissionForm, setTransmissionForm] = useState({
     titulo: '',
-    descricao: ''
+    descricao: '',
+    bitrate_override: '',
+    enable_recording: false
   });
 
   // Form para upload de logo
@@ -396,6 +398,8 @@ const IniciarTransmissao: React.FC = () => {
           playlist_id: selectedPlaylist,
           platform_ids: selectedPlatforms,
           id_transmission_settings: selectedSettings || null,
+          bitrate_override: transmissionForm.bitrate_override ? parseInt(transmissionForm.bitrate_override) : null,
+          enable_recording: transmissionForm.enable_recording,
           settings
         })
       });
@@ -404,8 +408,16 @@ const IniciarTransmissao: React.FC = () => {
 
       if (result.success) {
         toast.success('Transmissão iniciada com sucesso!');
+        
+        // Mostrar avisos se houver
+        if (result.warnings && result.warnings.length > 0) {
+          result.warnings.forEach((warning: string) => {
+            toast.warning(warning);
+          });
+        }
+        
         checkTransmissionStatus();
-        setTransmissionForm({ titulo: '', descricao: '' });
+        setTransmissionForm({ titulo: '', descricao: '', bitrate_override: '', enable_recording: false });
         setSelectedPlatforms([]);
         setSelectedPlaylist('');
         setSelectedSettings('');
@@ -1125,6 +1137,24 @@ const IniciarTransmissao: React.FC = () => {
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Bitrate Personalizado (kbps)
+                </label>
+                <input
+                  type="number"
+                  min="500"
+                  max="10000"
+                  value={transmissionForm.bitrate_override}
+                  onChange={(e) => setTransmissionForm(prev => ({ ...prev, bitrate_override: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Deixe vazio para usar o padrão"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Será limitado ao máximo permitido pelo seu plano
+                </p>
+              </div>
             </div>
 
             <div>
@@ -1138,6 +1168,18 @@ const IniciarTransmissao: React.FC = () => {
                 rows={3}
                 placeholder="Descrição da transmissão"
               />
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={transmissionForm.enable_recording}
+                  onChange={(e) => setTransmissionForm(prev => ({ ...prev, enable_recording: e.target.checked }))}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                />
+                <span className="ml-2 text-sm text-gray-700">Habilitar gravação da transmissão</span>
+              </label>
             </div>
 
             <div>
@@ -1216,6 +1258,20 @@ const IniciarTransmissao: React.FC = () => {
           <div className="flex items-start">
             <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">4</div>
             <p>Clique em "Iniciar Transmissão" e sua playlist será transmitida automaticamente para todas as plataformas</p>
+          </div>
+          <div className="flex items-start">
+            <div className="flex-shrink-0 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3 mt-0.5">5</div>
+            <p><strong>Para OBS:</strong> Use os dados de conexão na página "Dados de Conexão" para transmitir via OBS/Streamlabs</p>
+          </div>
+        </div>
+        
+        <div className="mt-4 p-3 bg-blue-100 rounded-md">
+          <h4 className="text-blue-900 font-medium mb-2">🎥 Duas formas de transmitir</h4>
+          <div className="text-blue-800 text-sm space-y-1">
+            <p>• <strong>Transmissão Direta:</strong> Use esta página para transmitir playlists automaticamente</p>
+            <p>• <strong>Transmissão OBS:</strong> Configure seu OBS com os dados da página "Dados de Conexão"</p>
+            <p>• <strong>Gravação:</strong> Vídeos são salvos automaticamente no servidor quando habilitado</p>
+            <p>• <strong>Limites:</strong> Bitrate e espectadores são controlados automaticamente pelo seu plano</p>
           </div>
         </div>
       </div>

@@ -2,12 +2,188 @@ const express = require('express');
 const db = require('../config/database');
 const authMiddleware = require('../middlewares/authMiddleware');
 const WowzaStreamingService = require('../config/WowzaStreamingService');
+
 const router = express.Router();
+
+// --- ROTA GET /obs-config - Configuração para OBS ---
+router.get('/obs-config', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userLogin = req.user.email.split('@')[0];
+    
+    // Buscar configurações do usuário
+    const [userConfigRows] = await db.execute(
+      `SELECT 
+        bitrate, espectadores, espaco, espaco_usado, aplicacao,
+        status_gravando, transcoder, transcoder_qualidades
+       FROM streamings 
+       WHERE codigo = ? OR codigo_cliente = ?`,
+      [userId, userId]
+    );
+
+    if (userConfigRows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Configurações do usuário não encontradas' 
+      });
+    }
+
+    const userConfig = userConfigRows[0];
+
+    // Inicializar serviço Wowza
+    const wowzaService = new WowzaStreamingService();
+    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    if (!initialized) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Erro ao conectar com servidor de streaming' 
+      });
+    }
+
+    // Configurar stream OBS
+    const obsResult = await wowzaService.startOBSStream({
+      userId,
+      userLogin,
+      userConfig,
+      platforms: [] // Plataformas serão configuradas separadamente
+    });
+
+    if (!obsResult.success) {
+      return res.status(500).json({ 
+        success: false, 
+        error: obsResult.error || 'Erro ao configurar stream OBS' 
+      });
+    }
+
+    // Verificar limites do usuário
+    const limitsCheck = await wowzaService.checkUserLimits(userConfig);
+
+    res.json({
+      success: true,
+      obs_config: {
+        rtmp_url: obsResult.data.rtmpUrl,
+        stream_key: obsResult.data.streamKey,
+        hls_url: obsResult.data.hlsUrl,
+        max_bitrate: userConfig.bitrate,
+        max_viewers: userConfig.espectadores,
+        recording_enabled: userConfig.status_gravando === 'sim',
+        recording_path: obsResult.data.recordingPath
+      },
+      user_limits: limitsCheck.success ? limitsCheck.limits : null,
+      warnings: limitsCheck.success ? limitsCheck.warnings : [],
+      server_info: obsResult.data.serverInfo
+    });
+  } catch (error) {
+    console.error('Erro ao obter configuração OBS:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// --- ROTA GET /obs-status - Status do stream OBS ---
+router.get('/obs-status', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Inicializar serviço Wowza
+    const wowzaService = new WowzaStreamingService();
+    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    if (!initialized) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Erro ao conectar com servidor de streaming' 
+      });
+    }
+
+    // Verificar status do stream OBS
+    const obsStats = await wowzaService.getOBSStreamStats(userId);
+
+    res.json({
+      success: true,
+      obs_stream: {
+        is_live: obsStats.isLive,
+        is_active: obsStats.isActive,
+        viewers: obsStats.viewers,
+        bitrate: obsStats.bitrate,
+        uptime: obsStats.uptime,
+        recording: obsStats.recording || false,
+        platforms: obsStats.platforms || []
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao verificar status OBS:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// --- ROTA POST /obs-stop - Parar stream OBS ---
+router.post('/obs-stop', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Inicializar serviço Wowza
+    const wowzaService = new WowzaStreamingService();
+    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    if (!initialized) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Erro ao conectar com servidor de streaming' 
+      });
+    }
+
+    // Parar stream OBS
+    const result = await wowzaService.stopOBSStream(userId);
+
+    res.json({
+      success: result.success,
+      message: result.message || 'Stream OBS finalizado',
+      error: result.error
+    });
+  } catch (error) {
+    console.error('Erro ao parar stream OBS:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// --- ROTA GET /recordings - Listar gravações ---
+router.get('/recordings', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userLogin = req.user.email.split('@')[0];
+    
+    // Inicializar serviço Wowza
+    const wowzaService = new WowzaStreamingService();
+    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    if (!initialized) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Erro ao conectar com servidor de streaming' 
+      });
+    }
+
+    // Listar gravações
+    const recordingsResult = await wowzaService.listRecordings(userLogin);
+
+    res.json({
+      success: recordingsResult.success,
+      recordings: recordingsResult.recordings || [],
+      path: recordingsResult.path,
+      error: recordingsResult.error
+    });
+  } catch (error) {
+    console.error('Erro ao listar gravações:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
 
 // --- ROTA GET /status ---
 router.get('/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
+    const userLogin = req.user.email.split('@')[0];
     
     // Inicializar serviço Wowza com dados do usuário
     const wowzaService = new WowzaStreamingService();
@@ -17,6 +193,26 @@ router.get('/status', authMiddleware, async (req, res) => {
       return res.status(500).json({ 
         success: false, 
         error: 'Erro ao conectar com servidor de streaming' 
+      });
+    }
+
+    // Verificar também se há stream OBS ativo
+    const obsStats = await wowzaService.getOBSStreamStats(userId);
+    
+    // Se não há transmissão de playlist, verificar OBS
+    if (transmissionRows.length === 0 && obsStats.isLive) {
+      return res.json({
+        success: true,
+        is_live: true,
+        stream_type: 'obs',
+        obs_stream: {
+          is_live: obsStats.isLive,
+          viewers: obsStats.viewers,
+          bitrate: obsStats.bitrate,
+          uptime: obsStats.uptime,
+          recording: obsStats.recording,
+          platforms: obsStats.platforms || []
+        }
       });
     }
 
@@ -58,6 +254,7 @@ router.get('/status', authMiddleware, async (req, res) => {
     res.json({
       success: true,
       is_live: true,
+      stream_type: 'playlist',
       transmission: {
         ...transmission,
         stats: {
@@ -91,14 +288,36 @@ router.post('/start', authMiddleware, async (req, res) => {
       descricao,
       playlist_id,
       platform_ids = [],
-      settings = {}
+      settings = {},
+      bitrate_override = null,
+      enable_recording = false
     } = req.body;
 
     const userId = req.user.id;
+    const userLogin = req.user.email.split('@')[0];
 
     if (!titulo || !playlist_id) {
       return res.status(400).json({ success: false, error: 'Título e playlist são obrigatórios' });
     }
+
+    // Buscar configurações do usuário
+    const [userConfigRows] = await db.execute(
+      `SELECT 
+        bitrate, espectadores, espaco, espaco_usado, aplicacao,
+        status_gravando, transcoder, transcoder_qualidades
+       FROM streamings 
+       WHERE codigo = ? OR codigo_cliente = ?`,
+      [userId, userId]
+    );
+
+    if (userConfigRows.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Configurações do usuário não encontradas' 
+      });
+    }
+
+    const userConfig = userConfigRows[0];
 
     // Verificar se já existe transmissão ativa
     const [activeTransmission] = await db.execute(
@@ -134,6 +353,20 @@ router.post('/start', authMiddleware, async (req, res) => {
       });
     }
 
+    // Verificar limites do usuário
+    const requestedBitrate = bitrate_override || userConfig.bitrate;
+    const limitsCheck = await wowzaService.checkUserLimits(userConfig, requestedBitrate);
+    
+    if (!limitsCheck.success) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Erro ao verificar limites do usuário' 
+      });
+    }
+
+    // Aplicar bitrate permitido
+    const allowedBitrate = limitsCheck.limits.bitrate.allowed;
+
     // Buscar plataformas do usuário selecionadas
     let platforms = [];
     if (platform_ids.length) {
@@ -152,9 +385,15 @@ router.post('/start', authMiddleware, async (req, res) => {
     const streamId = `stream_${userId}_${Date.now()}`;
 
     // Iniciar stream no Wowza
-    const wowzaResult = await wowzaService.startStream({
+    const wowzaResult = await wowzaService.startPlaylistStream({
       streamId,
       userId,
+      userLogin,
+      userConfig: {
+        ...userConfig,
+        bitrate: allowedBitrate,
+        gravar_stream: enable_recording ? 'sim' : userConfig.status_gravando
+      },
       playlistId: playlist_id,
       videos: playlistVideos,
       platforms: platforms.map(p => ({
@@ -172,9 +411,9 @@ router.post('/start', authMiddleware, async (req, res) => {
     const [transmissionResult] = await db.execute(
       `INSERT INTO transmissoes (
         codigo_stm, titulo, descricao, codigo_playlist, 
-        wowza_stream_id, status, data_inicio, settings
-      ) VALUES (?, ?, ?, ?, ?, 'ativa', NOW(), ?)`,
-      [userId, titulo, descricao || '', playlist_id, streamId, JSON.stringify(settings)]
+        wowza_stream_id, status, data_inicio, settings, bitrate_usado
+      ) VALUES (?, ?, ?, ?, ?, 'ativa', NOW(), ?, ?)`,
+      [userId, titulo, descricao || '', playlist_id, streamId, JSON.stringify(settings), allowedBitrate]
     );
 
     const transmissionId = transmissionResult.insertId;
@@ -194,9 +433,12 @@ router.post('/start', authMiddleware, async (req, res) => {
       transmission: {
         id: transmissionId,
         titulo,
-        wowza_stream_id: streamId
+        wowza_stream_id: streamId,
+        bitrate_usado: allowedBitrate
       },
-      wowza_data: wowzaResult.data
+      wowza_data: wowzaResult.data,
+      user_limits: limitsCheck.limits,
+      warnings: limitsCheck.warnings
     });
   } catch (error) {
     console.error('Erro ao iniciar transmissão:', error);
@@ -207,7 +449,7 @@ router.post('/start', authMiddleware, async (req, res) => {
 // --- ROTA POST /stop ---
 router.post('/stop', authMiddleware, async (req, res) => {
   try {
-    const { transmission_id } = req.body;
+    const { transmission_id, stream_type = 'playlist' } = req.body;
     const userId = req.user.id;
 
     // Inicializar serviço Wowza
@@ -224,22 +466,34 @@ router.post('/stop', authMiddleware, async (req, res) => {
       });
     }
 
-    const [transmissionRows] = await db.execute(
-      'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "ativa"',
-      [transmission_id, userId]
-    );
+    if (stream_type === 'obs') {
+      // Parar stream OBS
+      const result = await wowzaService.stopOBSStream(userId);
+      
+      return res.json({
+        success: result.success,
+        message: result.message || 'Stream OBS finalizado',
+        error: result.error
+      });
+    } else {
+      // Parar transmissão de playlist
+      const [transmissionRows] = await db.execute(
+        'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "ativa"',
+        [transmission_id, userId]
+      );
 
-    if (transmissionRows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Transmissão não encontrada ou já finalizada' });
+      if (transmissionRows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Transmissão não encontrada ou já finalizada' });
+      }
+
+      const transmission = transmissionRows[0];
+      const wowzaResult = await wowzaService.stopStream(transmission.wowza_stream_id);
+
+      await db.execute('UPDATE transmissoes SET status = "finalizada", data_fim = NOW() WHERE codigo = ?', [transmission_id]);
+      await db.execute('UPDATE transmissoes_plataformas SET status = "desconectada" WHERE transmissao_id = ?', [transmission_id]);
+
+      res.json({ success: true, message: 'Transmissão finalizada com sucesso', wowza_result: wowzaResult });
     }
-
-    const transmission = transmissionRows[0];
-    const wowzaResult = await wowzaService.stopStream(transmission.wowza_stream_id);
-
-    await db.execute('UPDATE transmissoes SET status = "finalizada", data_fim = NOW() WHERE codigo = ?', [transmission_id]);
-    await db.execute('UPDATE transmissoes_plataformas SET status = "desconectada" WHERE transmissao_id = ?', [transmission_id]);
-
-    res.json({ success: true, message: 'Transmissão finalizada com sucesso', wowza_result: wowzaResult });
   } catch (error) {
     console.error('Erro ao parar transmissão:', error);
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
