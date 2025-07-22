@@ -238,18 +238,28 @@ const MigrarVideosFTP: React.FC = () => {
     }));
     setMigrationProgress(initialProgress);
 
+    // Mostrar toast de progresso
+    toast.info(`Iniciando migração de ${selectedFiles.length} arquivo(s)...`, { 
+      autoClose: false, 
+      toastId: 'migration-progress' 
+    });
+
     try {
       const token = await getToken();
       
-      // Simular progresso durante o download
+      // Atualizar progresso durante o download
       const progressInterval = setInterval(() => {
         setMigrationProgress(prev => prev.map(item => {
-          if (item.status === 'pending') {
-            return { ...item, status: 'downloading', progress: Math.min(item.progress + 10, 90) };
+          if (item.status === 'pending' || item.status === 'downloading') {
+            return { 
+              ...item, 
+              status: 'downloading', 
+              progress: Math.min(item.progress + Math.random() * 15, 85) 
+            };
           }
           return item;
         }));
-      }, 1000);
+      }, 2000);
 
       const response = await fetch('/api/ftp/migrate', {
         method: 'POST',
@@ -265,24 +275,32 @@ const MigrarVideosFTP: React.FC = () => {
       });
 
       clearInterval(progressInterval);
+      toast.dismiss('migration-progress');
 
       const result = await response.json();
 
       if (result.success) {
-        toast.success(`${result.migratedFiles} de ${result.totalFiles} arquivo(s) migrado(s) com sucesso!`);
+        const successMessage = `${result.migratedFiles} de ${result.totalFiles} arquivo(s) migrado(s) com sucesso!`;
+        if (result.totalSizeMB) {
+          toast.success(`${successMessage} (${result.totalSizeMB.toFixed(1)} MB transferidos)`);
+        } else {
+          toast.success(successMessage);
+        }
         setSelectedFiles([]);
         
         // Atualizar progresso final
-        setMigrationProgress(prev => prev.map(item => ({
+        setMigrationProgress(prev => prev.map((item, index) => ({
           ...item,
           progress: 100,
-          status: 'completed'
+          status: index < result.migratedFiles ? 'completed' : 'error'
         })));
 
         if (result.errors && result.errors.length > 0) {
-          console.warn('Erros durante a migração:', result.errors);
+          console.warn('Alguns arquivos não puderam ser migrados:', result.errors);
+          toast.warning(`${result.errors.length} arquivo(s) não puderam ser migrados. Verifique o console para detalhes.`);
         }
       } else {
+        toast.dismiss('migration-progress');
         toast.error(result.error || 'Erro durante a migração');
         
         // Marcar como erro
@@ -294,6 +312,7 @@ const MigrarVideosFTP: React.FC = () => {
       }
     } catch (error) {
       console.error('Erro na migração:', error);
+      toast.dismiss('migration-progress');
       toast.error('Erro durante a migração');
       
       setMigrationProgress(prev => prev.map(item => ({

@@ -88,6 +88,9 @@ export default function BaixarYoutube() {
       const token = await getToken();
       if (!token) throw new Error('Usuário não autenticado');
 
+      // Mostrar toast de progresso
+      toast.info('Iniciando download do vídeo...', { autoClose: false, toastId: 'download-progress' });
+
       const response = await fetch('/api/downloadyoutube', {
         method: 'POST',
         headers: {
@@ -103,15 +106,18 @@ export default function BaixarYoutube() {
       const data: VideoResponse = await response.json();
 
       if (response.ok && data.success) {
+        toast.dismiss('download-progress');
         toast.success(data.message || `✅ Vídeo "${data.video.nome}" baixado com sucesso!`);
         setUrl('');
         setIdPasta('');
         setUrlValid(null);
       } else {
+        toast.dismiss('download-progress');
         throw new Error(data.error || 'Erro ao baixar vídeo');
       }
     } catch (err: any) {
       console.error('Erro no download:', err);
+      toast.dismiss('download-progress');
       toast.error(err.message || 'Erro ao baixar vídeo');
     } finally {
       setLoading(false);
